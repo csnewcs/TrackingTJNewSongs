@@ -202,6 +202,30 @@ func (d *DB) HasRunToday(date time.Time) (bool, error) {
 	return count > 0, nil
 }
 
+func (d *DB) GetLatestLastUpdatedDate() (*time.Time, error) {
+	var t time.Time
+	err := d.db.QueryRow("SELECT date FROM last_updated ORDER BY date DESC LIMIT 1").Scan(&t)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		var dateStr string
+		err2 := d.db.QueryRow("SELECT date::text FROM last_updated ORDER BY date DESC LIMIT 1").Scan(&dateStr)
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to get latest last_updated date: %w", err)
+		}
+		if len(dateStr) >= 10 {
+			dateStr = dateStr[:10]
+		}
+		parsed, err3 := time.Parse("2006-01-02", dateStr)
+		if err3 != nil {
+			return nil, fmt.Errorf("failed to parse date string %s: %w", dateStr, err3)
+		}
+		return &parsed, nil
+	}
+	return &t, nil
+}
+
 func (d *DB) AddMatchedHistory(pro int, title string, artist string, publishDate time.Time) error {
 	_, err := d.db.Exec(
 		"INSERT INTO matched_history (pro, title, artist, publish_date, matched_at) VALUES ($1, $2, $3, $4, NOW())",

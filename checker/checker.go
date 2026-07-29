@@ -42,6 +42,7 @@ func (c *Checker) CheckMatches(
 	newSongs []tjapi.TJSongItem,
 	artists []db.TrackingItem,
 	songs []db.TrackingItem,
+	lastUpdatedDate *time.Time,
 ) []MatchResult {
 	var results []MatchResult
 
@@ -50,6 +51,13 @@ func (c *Checker) CheckMatches(
 		if err != nil {
 			// If publishdate format is different or empty, fallback to zero time or skip date filter
 			songPublishDate = time.Time{}
+		}
+
+		// last_updated 이후 추가된(수록된) 신곡만 검사 대상에 포함
+		if lastUpdatedDate != nil && !songPublishDate.IsZero() {
+			if isBeforeDate(songPublishDate, *lastUpdatedDate) {
+				continue
+			}
 		}
 
 		var matchedReasons []string

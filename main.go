@@ -120,18 +120,6 @@ func main() {
 
 func runTracker(database *db.DB, force bool) {
 	now := time.Now()
-
-	// --force 옵션이 아닌 경우 오늘 이미 실행되었는지 검사
-	if !force {
-		hasRun, err := database.HasRunToday(now)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️ 오늘 실행 이력 조회 실패: %v\n", err)
-		} else if hasRun {
-			// 오늘 이미 실행되었으므로 API 호출 없이 조용히 종료
-			return
-		}
-	}
-
 	searchYm := now.Format("200601")
 
 	// 1. API 신곡 조회
@@ -157,11 +145,22 @@ func runTracker(database *db.DB, force bool) {
 		dictEntries = nil
 	}
 
-	// 3. 매칭 검사 수행
-	chk := checker.NewChecker(dictEntries)
-	matches := chk.CheckMatches(songs, artists, trackingSongs)
+	// 3. 가장 최근 last_updated 날짜 조회 (last_updated 이후 추가된 신곡 대상 검사)
+	var lastUpdatedDate *time.Time
+	if !force {
+		latestDate, err := database.GetLatestLastUpdatedDate()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️ 최근 last_updated 날짜 조회 실패: %v\n", err)
+		} else {
+			lastUpdatedDate = latestDate
+		}
+	}
 
-	// 4. last_updated 기록
+	// 4. 매칭 검사 수행
+	chk := checker.NewChecker(dictEntries)
+	matches := chk.CheckMatches(songs, artists, trackingSongs, lastUpdatedDate)
+
+	// 5. last_updated 기록
 	if err := database.RecordLastUpdated(now, len(matches)); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️ last_updated DB 기록 실패: %v\n", err)
 	}
