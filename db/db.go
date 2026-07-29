@@ -24,6 +24,15 @@ type LastUpdated struct {
 	Matched int
 }
 
+type MatchedHistoryRecord struct {
+	ID          int
+	Pro         int
+	Title       string
+	Artist      string
+	PublishDate time.Time
+	MatchedAt   time.Time
+}
+
 type DB struct {
 	db *sql.DB
 }
@@ -36,6 +45,20 @@ func New(connStr string) (*DB, error) {
 
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	_, err = sqlDB.Exec(`
+		CREATE TABLE IF NOT EXISTS matched_history (
+			id SERIAL PRIMARY KEY,
+			pro INTEGER NOT NULL,
+			title VARCHAR(100) NOT NULL,
+			artist VARCHAR(100) NOT NULL,
+			publish_date DATE NOT NULL,
+			matched_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+		);
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure matched_history table: %w", err)
 	}
 
 	return &DB{db: sqlDB}, nil
@@ -177,4 +200,52 @@ func (d *DB) HasRunToday(date time.Time) (bool, error) {
 		return false, fmt.Errorf("failed to check last_updated for today: %w", err)
 	}
 	return count > 0, nil
+}
+
+func (d *DB) AddMatchedHistory(pro int, title string, artist string, publishDate time.Time) error {
+	_, err := d.db.Exec(
+		"INSERT INTO matched_history (pro, title, artist, publish_date, matched_at) VALUES ($1, $2, $3, $4, NOW())",
+		pro, title, artist, publishDate,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert into matched_history: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetMatchedHistory(limit int) ([]MatchedHistoryRecord, error) {
+	rows, err := d.db.Query("SELECT id, pro, title, artist, publish_date, matched_at FROM matched_history ORDER BY matched_at DESC LIMIT $1", limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query matched_history: %w", err)
+	}
+	defer rows.Close()
+
+	var records []MatchedHistoryRecord
+	for rows.Next() {
+		var r MatchedHistoryRecord
+		if err := rows.Scan(&r.ID, &r.Pro, &r.Title, &r.Artist, &r.PublishDate, &r.MatchedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
+func (d *DB) GetTodayMatchedHistory() ([]MatchedHistoryRecord, error) {
+	todayStr := time.Now().Format("2006-01-02")
+	rows, err := d.db.Query("SELECT id, pro, title, artist, publish_date, matched_at FROM matched_history WHERE DATE(matched_at) = $1 ORDER BY matched_at DESC", todayStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query today's matched_history: %w", err)
+	}
+	defer rows.Close()
+
+	var records []MatchedHistoryRecord
+	for rows.Next() {
+		var r MatchedHistoryRecord
+		if err := rows.Scan(&r.ID, &r.Pro, &r.Title, &r.Artist, &r.PublishDate, &r.MatchedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, nil
 }

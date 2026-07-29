@@ -166,7 +166,15 @@ func runTracker(database *db.DB, force bool) {
 		fmt.Fprintf(os.Stderr, "⚠️ last_updated DB 기록 실패: %v\n", err)
 	}
 
-	// 5. 매칭이 확인된 관심 곡(tracking_songs) 자동 삭제
+	// 5. 매칭 상세 내역 DB 저장 (matched_history)
+	for _, m := range matches {
+		pubDate, _ := time.Parse("2006-01-02", m.Song.PublishDate)
+		if err := database.AddMatchedHistory(m.Song.Pro, m.Song.IndexTitle, m.Song.IndexSong, pubDate); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️ matched_history 저장 실패: %v\n", err)
+		}
+	}
+
+	// 6. 매칭이 확인된 관심 곡(tracking_songs) 자동 삭제
 	deletedSongs := make(map[string]bool)
 	for _, m := range matches {
 		for _, songTitle := range m.MatchedSongTitles {
@@ -179,7 +187,7 @@ func runTracker(database *db.DB, force bool) {
 		}
 	}
 
-	// 6. 매칭 결과가 있을 때만 최소 정보 출력
+	// 7. 매칭 결과가 있을 때만 최소 정보 출력
 	if len(matches) > 0 {
 		for _, m := range matches {
 			fmt.Printf("곡번호: %d | 제목: %s | 가수: %s | 수록일: %s\n",
@@ -199,12 +207,27 @@ func listTargets(database *db.DB) {
 		log.Fatalf("❌ 곡 목록 조회 실패: %v", err)
 	}
 
+	todayMatches, err := database.GetTodayMatchedHistory()
+	if err != nil {
+		log.Printf("⚠️ 오늘 매칭 히스토리 조회 실패: %v", err)
+	}
+
 	logs, err := database.GetLastUpdatedLogs(5)
 	if err != nil {
 		log.Printf("⚠️ 실행 이력 조회 실패: %v", err)
 	}
 
-	fmt.Println("📌 [추적 중인 아티스트 목록]")
+	fmt.Println("🎉 [오늘 매칭/등록 확인된 신곡 목록]")
+	if len(todayMatches) == 0 {
+		fmt.Println("   (오늘 등록 확인된 신곡이 없습니다)")
+	} else {
+		for _, m := range todayMatches {
+			fmt.Printf("   - [%d] %s - %s (수록일: %s, 확인시간: %s)\n",
+				m.Pro, m.Title, m.Artist, m.PublishDate.Format("2006-01-02"), m.MatchedAt.Format("15:04:05"))
+		}
+	}
+
+	fmt.Println("\n📌 [추적 중인 아티스트 목록]")
 	if len(artists) == 0 {
 		fmt.Println("   (등록된 아티스트가 없습니다)")
 	} else {
@@ -240,5 +263,5 @@ func printUsage() {
   ./tracking-tj add song <곡제목> [날짜]   : 관심 곡 추가 (날짜 기본값: 오늘, 예: 2026-07-01)
   ./tracking-tj delete artist <가수명>   : 관심 아티스트 삭제
   ./tracking-tj delete song <곡제목>     : 관심 곡 삭제
-  ./tracking-tj list                    : 추적 중인 대상 및 실행 이력 목록 조회`)
+  ./tracking-tj list                    : 추적 대상, 오늘 매칭 신곡 및 실행 이력 목록 조회`)
 }
