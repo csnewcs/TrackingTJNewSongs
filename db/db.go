@@ -169,3 +169,12 @@ func (d *DB) GetLastUpdatedLogs(limit int) ([]LastUpdated, error) {
 	}
 	return logs, nil
 }
+
+func (d *DB) HasRunToday(date time.Time) (bool, error) {
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM last_updated WHERE date = $1", date.Format("2006-01-02")).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check last_updated for today: %w", err)
+	}
+	return count > 0, nil
+}

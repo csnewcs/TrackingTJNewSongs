@@ -21,8 +21,16 @@ func main() {
 
 	args := os.Args[1:]
 
-	if len(args) == 0 {
-		runTracker(database)
+	force := false
+	for _, arg := range args {
+		if arg == "--force" || arg == "-f" {
+			force = true
+			break
+		}
+	}
+
+	if len(args) == 0 || args[0] == "--force" || args[0] == "-f" {
+		runTracker(database, force)
 		return
 	}
 
@@ -30,7 +38,7 @@ func main() {
 
 	switch command {
 	case "run":
-		runTracker(database)
+		runTracker(database, force)
 
 	case "add":
 		if len(args) < 3 {
@@ -110,8 +118,20 @@ func main() {
 	}
 }
 
-func runTracker(database *db.DB) {
+func runTracker(database *db.DB, force bool) {
 	now := time.Now()
+
+	// --force 옵션이 아닌 경우 오늘 이미 실행되었는지 검사
+	if !force {
+		hasRun, err := database.HasRunToday(now)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️ 오늘 실행 이력 조회 실패: %v\n", err)
+		} else if hasRun {
+			// 오늘 이미 실행되었으므로 API 호출 없이 조용히 종료
+			return
+		}
+	}
+
 	searchYm := now.Format("200601")
 
 	// 1. API 신곡 조회
@@ -214,8 +234,8 @@ func listTargets(database *db.DB) {
 
 func printUsage() {
 	fmt.Println(`사용법:
-  ./tracking-tj                         : TJ 신곡 수집 및 매칭 검사 실행 (기본)
-  ./tracking-tj run                     : TJ 신곡 수집 및 매칭 검사 실행
+  ./tracking-tj                         : TJ 신곡 수집 및 매칭 검사 실행 (오늘 이미 실행되었으면 스킵)
+  ./tracking-tj run --force             : 오늘 실행 여부 상관없이 강제 실행
   ./tracking-tj add artist <가수명> [날짜] : 관심 아티스트 추가 (날짜 기본값: 오늘, 예: 2026-07-01)
   ./tracking-tj add song <곡제목> [날짜]   : 관심 곡 추가 (날짜 기본값: 오늘, 예: 2026-07-01)
   ./tracking-tj delete artist <가수명>   : 관심 아티스트 삭제
