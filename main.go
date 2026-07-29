@@ -187,10 +187,10 @@ func runTracker(database *db.DB, force bool) {
 		}
 	}
 
-	// 7. 매칭 결과가 있을 때만 최소 정보 출력
+	// 7. 매칭 결과가 있을 때 봇 파싱용 TSV(Tab-Separated Values) 형식 출력 (곡번호	제목	가수	수록일)
 	if len(matches) > 0 {
 		for _, m := range matches {
-			fmt.Printf("곡번호: %d | 제목: %s | 가수: %s | 수록일: %s\n",
+			fmt.Printf("%d\t%s\t%s\t%s\n",
 				m.Song.Pro, m.Song.IndexTitle, m.Song.IndexSong, m.Song.PublishDate)
 		}
 	}
