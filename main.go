@@ -21,16 +21,8 @@ func main() {
 
 	args := os.Args[1:]
 
-	force := false
-	for _, arg := range args {
-		if arg == "--force" || arg == "-f" {
-			force = true
-			break
-		}
-	}
-
-	if len(args) == 0 || args[0] == "--force" || args[0] == "-f" {
-		runTracker(database, force)
+	if len(args) == 0 {
+		runTracker(database)
 		return
 	}
 
@@ -38,7 +30,7 @@ func main() {
 
 	switch command {
 	case "run":
-		runTracker(database, force)
+		runTracker(database)
 
 	case "add":
 		if len(args) < 3 {
@@ -118,7 +110,7 @@ func main() {
 	}
 }
 
-func runTracker(database *db.DB, force bool) {
+func runTracker(database *db.DB) {
 	now := time.Now()
 	searchYm := now.Format("200601")
 
@@ -145,22 +137,11 @@ func runTracker(database *db.DB, force bool) {
 		dictEntries = nil
 	}
 
-	// 3. 가장 최근 last_updated 날짜 조회 (last_updated 이후 추가된 신곡 대상 검사)
-	var lastUpdatedDate *time.Time
-	if !force {
-		latestDate, err := database.GetLatestLastUpdatedDate()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️ 최근 last_updated 날짜 조회 실패: %v\n", err)
-		} else {
-			lastUpdatedDate = latestDate
-		}
-	}
-
-	// 4. 매칭 검사 수행
+	// 3. 매칭 검사 수행 (날짜 필터 없이 API 수집 전체 대상 매칭)
 	chk := checker.NewChecker(dictEntries)
-	matches := chk.CheckMatches(songs, artists, trackingSongs, lastUpdatedDate)
+	matches := chk.CheckMatches(songs, artists, trackingSongs)
 
-	// 5. last_updated 기록
+	// 4. last_updated 기록
 	if err := database.RecordLastUpdated(now, len(matches)); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️ last_updated DB 기록 실패: %v\n", err)
 	}
@@ -186,7 +167,7 @@ func runTracker(database *db.DB, force bool) {
 		}
 	}
 
-	// 7. 매칭 결과가 있을 때 봇 파싱용 TSV(Tab-Separated Values) 형식 출력 (곡번호	제목	가수	수록일)
+	// 7. 매칭 결과가 있을 때 봇 파싱용 TSV(Tab-Separated Values) 형식 출력
 	if len(matches) > 0 {
 		for _, m := range matches {
 			fmt.Printf("%d\t%s\t%s\t%s\n",
@@ -256,8 +237,8 @@ func listTargets(database *db.DB) {
 
 func printUsage() {
 	fmt.Println(`사용법:
-  ./tracking-tj                         : TJ 신곡 수집 및 매칭 검사 실행 (오늘 이미 실행되었으면 스킵)
-  ./tracking-tj run --force             : 오늘 실행 여부 상관없이 강제 실행
+  ./tracking-tj                         : TJ 신곡 수집 및 매칭 검사 실행
+  ./tracking-tj run                     : TJ 신곡 수집 및 매칭 검사 실행
   ./tracking-tj add artist <가수명> [날짜] : 관심 아티스트 추가 (날짜 기본값: 오늘, 예: 2026-07-01)
   ./tracking-tj add song <곡제목> [날짜]   : 관심 곡 추가 (날짜 기본값: 오늘, 예: 2026-07-01)
   ./tracking-tj delete artist <가수명>   : 관심 아티스트 삭제

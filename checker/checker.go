@@ -42,24 +42,10 @@ func (c *Checker) CheckMatches(
 	newSongs []tjapi.TJSongItem,
 	artists []db.TrackingItem,
 	songs []db.TrackingItem,
-	lastUpdatedDate *time.Time,
 ) []MatchResult {
 	var results []MatchResult
 
 	for _, item := range newSongs {
-		songPublishDate, err := time.Parse("2006-01-02", item.PublishDate)
-		if err != nil {
-			// If publishdate format is different or empty, fallback to zero time or skip date filter
-			songPublishDate = time.Time{}
-		}
-
-		// last_updated 이후 추가된(수록된) 신곡만 검사 대상에 포함
-		if lastUpdatedDate != nil && !songPublishDate.IsZero() {
-			if isBeforeDate(songPublishDate, *lastUpdatedDate) {
-				continue
-			}
-		}
-
 		var matchedReasons []string
 		var matchedSongTitles []string
 		matchedArtist := false
@@ -67,28 +53,18 @@ func (c *Checker) CheckMatches(
 
 		// 1. Artist matching
 		for _, artist := range artists {
-			if !songPublishDate.IsZero() && isBeforeDate(songPublishDate, artist.StartFrom) {
-				continue
-			}
-
 			if c.isMatch(item.IndexSong, artist.Title) {
 				matchedArtist = true
-				matchedReasons = append(matchedReasons, fmt.Sprintf("가수 매칭: '%s' (추적 시작일: %s)",
-					artist.Title, artist.StartFrom.Format("2006-01-02")))
+				matchedReasons = append(matchedReasons, fmt.Sprintf("가수 매칭: '%s'", artist.Title))
 			}
 		}
 
 		// 2. Song title matching
 		for _, songTrack := range songs {
-			if !songPublishDate.IsZero() && isBeforeDate(songPublishDate, songTrack.StartFrom) {
-				continue
-			}
-
 			if c.isMatch(item.IndexTitle, songTrack.Title) {
 				matchedSongTitle = true
 				matchedSongTitles = append(matchedSongTitles, songTrack.Title)
-				matchedReasons = append(matchedReasons, fmt.Sprintf("곡 제목 매칭: '%s' (추적 시작일: %s)",
-					songTrack.Title, songTrack.StartFrom.Format("2006-01-02")))
+				matchedReasons = append(matchedReasons, fmt.Sprintf("곡 제목 매칭: '%s'", songTrack.Title))
 			}
 		}
 
