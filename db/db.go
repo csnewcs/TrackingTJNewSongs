@@ -228,7 +228,7 @@ func (d *DB) GetLatestLastUpdatedDate() (*time.Time, error) {
 
 func (d *DB) AddMatchedHistory(pro int, title string, artist string, publishDate time.Time) error {
 	_, err := d.db.Exec(
-		"INSERT INTO matched_history (pro, title, artist, publish_date, matched_at) VALUES ($1, $2, $3, $4, NOW())",
+		"INSERT INTO matched_history (pro, title, artist, publish_date, matched_at) VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT (pro) DO UPDATE SET matched_at = NOW()",
 		pro, title, artist, publishDate,
 	)
 	if err != nil {
