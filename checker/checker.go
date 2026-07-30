@@ -42,10 +42,23 @@ func (c *Checker) CheckMatches(
 	newSongs []tjapi.TJSongItem,
 	artists []db.TrackingItem,
 	songs []db.TrackingItem,
+	lastUpdatedDate *time.Time,
 ) []MatchResult {
 	var results []MatchResult
 
 	for _, item := range newSongs {
+		songPublishDate, err := time.Parse("2006-01-02", item.PublishDate)
+		if err != nil {
+			songPublishDate = time.Time{}
+		}
+
+		// last_updated 날짜가 존재할 경우, 해당 날짜 이후(publishdate > lastUpdatedDate)에 올라온 신곡만 검사
+		if lastUpdatedDate != nil && !songPublishDate.IsZero() {
+			if !isAfterDate(songPublishDate, *lastUpdatedDate) {
+				continue
+			}
+		}
+
 		var matchedReasons []string
 		var matchedSongTitles []string
 		matchedArtist := false
@@ -135,8 +148,27 @@ func isBeforeDate(t1, t2 time.Time) bool {
 	if m1 < m2 {
 		return true
 	}
-	if m1 > m2 {
+	if m1 < m2 {
 		return false
 	}
 	return d1 < d2
+}
+
+func isAfterDate(t1, t2 time.Time) bool {
+	y1, m1, d1 := t1.Date()
+	y2, m2, d2 := t2.Date()
+
+	if y1 > y2 {
+		return true
+	}
+	if y1 < y2 {
+		return false
+	}
+	if m1 > m2 {
+		return true
+	}
+	if m1 < m2 {
+		return false
+	}
+	return d1 > d2
 }
