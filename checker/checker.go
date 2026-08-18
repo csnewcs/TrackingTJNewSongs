@@ -42,21 +42,14 @@ func (c *Checker) CheckMatches(
 	newSongs []tjapi.TJSongItem,
 	artists []db.TrackingItem,
 	songs []db.TrackingItem,
-	lastUpdatedDate *time.Time,
+	alreadyMatchedProMap map[int]bool,
 ) []MatchResult {
 	var results []MatchResult
 
 	for _, item := range newSongs {
-		songPublishDate, err := time.Parse("2006-01-02", item.PublishDate)
-		if err != nil {
-			songPublishDate = time.Time{}
-		}
-
-		// last_updated 날짜가 존재할 경우, 해당 날짜 이후(publishdate > lastUpdatedDate)에 올라온 신곡만 검사
-		if lastUpdatedDate != nil && !songPublishDate.IsZero() {
-			if !isAfterDate(songPublishDate, *lastUpdatedDate) {
-				continue
-			}
+		// 이미 matched_history에 기록된 곡은 중복 알림 방지를 위해 스킵
+		if alreadyMatchedProMap != nil && alreadyMatchedProMap[item.Pro] {
+			continue
 		}
 
 		var matchedReasons []string

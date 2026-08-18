@@ -273,3 +273,21 @@ func (d *DB) GetTodayMatchedHistory() ([]MatchedHistoryRecord, error) {
 	}
 	return records, nil
 }
+
+func (d *DB) GetMatchedHistoryProMap() (map[int]bool, error) {
+	rows, err := d.db.Query("SELECT pro FROM matched_history")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query matched_history pros: %w", err)
+	}
+	defer rows.Close()
+
+	proMap := make(map[int]bool)
+	for rows.Next() {
+		var pro int
+		if err := rows.Scan(&pro); err != nil {
+			return nil, err
+		}
+		proMap[pro] = true
+	}
+	return proMap, nil
+}

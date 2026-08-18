@@ -137,17 +137,17 @@ func runTracker(database *db.DB) {
 		dictEntries = nil
 	}
 
-	// 3. 최근 last_updated 일자 조회 (last_updated 이후 수록곡 대상 검사)
-	latestLastUpdatedDate, err := database.GetLatestLastUpdatedDate()
+	// 3. 이미 알림/매칭이 완료된 곡 번호(pro) 목록 조회 (중복 알림 방지)
+	alreadyMatchedProMap, err := database.GetMatchedHistoryProMap()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️ 최근 last_updated 날짜 조회 실패: %v\n", err)
+		fmt.Fprintf(os.Stderr, "⚠️ 매칭 이력 조회 실패: %v\n", err)
 	}
 
-	// 4. 매칭 검사 수행
+	// 4. 매칭 검사 수행 (신규 신곡 대상)
 	chk := checker.NewChecker(dictEntries)
-	matches := chk.CheckMatches(songs, artists, trackingSongs, latestLastUpdatedDate)
+	matches := chk.CheckMatches(songs, artists, trackingSongs, alreadyMatchedProMap)
 
-	// 4. last_updated 기록
+	// 5. last_updated 기록
 	if err := database.RecordLastUpdated(now, len(matches)); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️ last_updated DB 기록 실패: %v\n", err)
 	}
