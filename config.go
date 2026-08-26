@@ -15,8 +15,13 @@ type Config struct {
 }
 
 func LoadConfig() Config {
+	defaultHost := "localhost"
+	if _, err := os.Stat("/tmp/.s.PGSQL.5432"); err == nil {
+		defaultHost = "/tmp"
+	}
+
 	return Config{
-		DBHost:     getEnv("DB_HOST", "localhost"),
+		DBHost:     getEnv("DB_HOST", defaultHost),
 		DBPort:     getEnv("DB_PORT", "5432"),
 		DBUser:     getEnv("DB_USER", "tj"),
 		DBPassword: getEnv("DB_PASSWORD", ""),
