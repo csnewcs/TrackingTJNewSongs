@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
+	"tracking-tj/alias"
 	"tracking-tj/checker"
 	"tracking-tj/db"
 	"tracking-tj/tjapi"
@@ -32,6 +35,19 @@ func main() {
 	case "run":
 		runTracker(database)
 
+	case "search":
+		if len(args) < 2 {
+			fmt.Println(`{"error": "search query required"}`)
+			os.Exit(1)
+		}
+		query := strings.Join(args[1:], " ")
+		res, err := alias.SearchAliases(query)
+		if err != nil {
+			fmt.Printf(`{"error": "%s"}`+"\n", err.Error())
+			os.Exit(1)
+		}
+		fmt.Println(alias.ToJSON(res))
+
 	case "add":
 		if len(args) < 3 {
 			printUsage()
@@ -40,25 +56,60 @@ func main() {
 		subCmd := args[1]
 		name := args[2]
 
+		var aliases []string
+		autoSearch := false
 		startDate := time.Now()
-		if len(args) >= 4 {
-			parsed, err := time.Parse("2006-01-02", args[3])
-			if err != nil {
-				log.Fatalf("❌ 날짜 형식이 올바르지 않습니다 (예: YYYY-MM-DD): %v", err)
+
+		for i := 3; i < len(args); i++ {
+			arg := args[i]
+			if arg == "--auto-search" || arg == "-s" {
+				autoSearch = true
+			} else if strings.HasPrefix(arg, "--alias=") {
+				val := strings.TrimPrefix(arg, "--alias=")
+				for _, a := range strings.Split(val, ",") {
+					if t := strings.TrimSpace(a); t != "" {
+						aliases = append(aliases, t)
+					}
+				}
+			} else if arg == "--alias" && i+1 < len(args) {
+				i++
+				for _, a := range strings.Split(args[i], ",") {
+					if t := strings.TrimSpace(a); t != "" {
+						aliases = append(aliases, t)
+					}
+				}
+			} else if parsed, err := time.Parse("2006-01-02", arg); err == nil {
+				startDate = parsed
+			} else {
+				aliases = append(aliases, arg)
 			}
-			startDate = parsed
+		}
+
+		// 자동 검색 옵션이 활성화된 경우 YouTube/나무위키에서 별칭 수집
+		if autoSearch {
+			if searchRes, err := alias.SearchAliases(name); err == nil {
+				for _, c := range searchRes.Candidates {
+					aliases = append(aliases, c.AltTitles...)
+				}
+			}
 		}
 
 		if subCmd == "artist" {
 			if err := database.AddTrackingArtist(name, startDate); err != nil {
 				log.Fatalf("❌ 아티스트 추가 실패: %v", err)
 			}
-			fmt.Printf("✅ 관심 아티스트가 추가되었습니다: '%s' (시작일: %s)\n", name, startDate.Format("2006-01-02"))
+			if len(aliases) > 0 {
+				_ = database.AddAltTitles("artist", name, aliases, "manual")
+			}
+			fmt.Printf("✅ 관심 아티스트 추가 완료: '%s' (별칭: %s)\n", name, formatAliases(aliases))
 		} else if subCmd == "song" {
 			if err := database.AddTrackingSong(name, startDate); err != nil {
 				log.Fatalf("❌ 관심 곡 추가 실패: %v", err)
 			}
-			fmt.Printf("✅ 관심 곡이 추가되었습니다: '%s' (시작일: %s)\n", name, startDate.Format("2006-01-02"))
+			if len(aliases) > 0 {
+				_ = database.AddAltTitles("song", name, aliases, "manual")
+			}
+			fmt.Printf("✅ 관심 곡 추가 완료: '%s' (별칭: %s)\n", name, formatAliases(aliases))
 		} else {
 			printUsage()
 			os.Exit(1)
@@ -98,7 +149,17 @@ func main() {
 		}
 
 	case "list":
-		listTargets(database)
+		asJSON := false
+		for _, a := range args[1:] {
+			if a == "--json" || a == "-j" {
+				asJSON = true
+			}
+		}
+		if asJSON {
+			listTargetsJSON(database)
+		} else {
+			listTargets(database)
+		}
 
 	case "help", "-h", "--help":
 		printUsage()
@@ -124,7 +185,6 @@ func runTracker(database *db.DB) {
 
 	songsPrev, err := apiClient.FetchNewSongs(prevYm)
 	if err != nil {
-		// 전월 조회 실패 시 당월만 진행
 		songsPrev = nil
 	}
 
@@ -137,7 +197,7 @@ func runTracker(database *db.DB) {
 		}
 	}
 
-	// 2. DB 추적 정보 읽기
+	// 2. DB 추적 정보 및 별칭(alt_titles) 읽기
 	artists, err := database.GetTrackingArtists()
 	if err != nil {
 		log.Fatalf("❌ 추적 아티스트 목록 조회 실패: %v", err)
@@ -147,6 +207,8 @@ func runTracker(database *db.DB) {
 	if err != nil {
 		log.Fatalf("❌ 추적 곡 목록 조회 실패: %v", err)
 	}
+
+	artistAltMap, songAltMap, _ := database.GetAllAltTitlesMap()
 
 	dictEntries, err := database.GetKoreanDictionary()
 	if err != nil {
@@ -161,14 +223,14 @@ func runTracker(database *db.DB) {
 
 	// 4. 매칭 검사 수행 (신규 신곡 대상)
 	chk := checker.NewChecker(dictEntries)
-	matches := chk.CheckMatches(songs, artists, trackingSongs, alreadyMatchedProMap)
+	matches := chk.CheckMatches(songs, artists, trackingSongs, alreadyMatchedProMap, artistAltMap, songAltMap)
 
 	// 5. last_updated 기록
 	if err := database.RecordLastUpdated(now, len(matches)); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️ last_updated DB 기록 실패: %v\n", err)
 	}
 
-	// 5. 매칭 상세 내역 DB 저장 (matched_history)
+	// 6. 매칭 상세 내역 DB 저장 (matched_history)
 	for _, m := range matches {
 		pubDate, _ := time.Parse("2006-01-02", m.Song.PublishDate)
 		if err := database.AddMatchedHistory(m.Song.Pro, m.Song.IndexTitle, m.Song.IndexSong, pubDate); err != nil {
@@ -176,7 +238,7 @@ func runTracker(database *db.DB) {
 		}
 	}
 
-	// 6. 매칭이 확인된 관심 곡(tracking_songs) 자동 삭제
+	// 7. 매칭이 확인된 관심 곡(tracking_songs) 자동 삭제
 	deletedSongs := make(map[string]bool)
 	for _, m := range matches {
 		for _, songTitle := range m.MatchedSongTitles {
@@ -189,7 +251,7 @@ func runTracker(database *db.DB) {
 		}
 	}
 
-	// 7. 매칭 결과가 있을 때 봇 파싱용 TSV(Tab-Separated Values) 형식 출력
+	// 8. 매칭 결과가 있을 때 봇 파싱용 TSV(Tab-Separated Values) 형식 출력
 	if len(matches) > 0 {
 		for _, m := range matches {
 			fmt.Printf("%d\t%s\t%s\t%s\n",
@@ -208,6 +270,8 @@ func listTargets(database *db.DB) {
 	if err != nil {
 		log.Fatalf("❌ 곡 목록 조회 실패: %v", err)
 	}
+
+	artistAltMap, songAltMap, _ := database.GetAllAltTitlesMap()
 
 	todayMatches, err := database.GetTodayMatchedHistory()
 	if err != nil {
@@ -234,7 +298,12 @@ func listTargets(database *db.DB) {
 		fmt.Println("   (등록된 아티스트가 없습니다)")
 	} else {
 		for _, a := range artists {
-			fmt.Printf("   - %s (시작일: %s)\n", a.Title, a.StartFrom.Format("2006-01-02"))
+			alts := artistAltMap[a.Title]
+			if len(alts) > 0 {
+				fmt.Printf("   - %s (별칭: %s, 시작일: %s)\n", a.Title, strings.Join(alts, ", "), a.StartFrom.Format("2006-01-02"))
+			} else {
+				fmt.Printf("   - %s (시작일: %s)\n", a.Title, a.StartFrom.Format("2006-01-02"))
+			}
 		}
 	}
 
@@ -243,7 +312,12 @@ func listTargets(database *db.DB) {
 		fmt.Println("   (등록된 곡이 없습니다)")
 	} else {
 		for _, s := range songs {
-			fmt.Printf("   - %s (시작일: %s)\n", s.Title, s.StartFrom.Format("2006-01-02"))
+			alts := songAltMap[s.Title]
+			if len(alts) > 0 {
+				fmt.Printf("   - %s (별칭: %s, 시작일: %s)\n", s.Title, strings.Join(alts, ", "), s.StartFrom.Format("2006-01-02"))
+			} else {
+				fmt.Printf("   - %s (시작일: %s)\n", s.Title, s.StartFrom.Format("2006-01-02"))
+			}
 		}
 	}
 
@@ -257,13 +331,66 @@ func listTargets(database *db.DB) {
 	}
 }
 
+type ListJSONOutput struct {
+	TodayMatches []db.MatchedHistoryRecord `json:"today_matches"`
+	Artists      []TargetWithAlts          `json:"artists"`
+	Songs        []TargetWithAlts          `json:"songs"`
+}
+
+type TargetWithAlts struct {
+	Title     string   `json:"title"`
+	AltTitles []string `json:"alt_titles"`
+	StartFrom string   `json:"start_from"`
+}
+
+func listTargetsJSON(database *db.DB) {
+	artists, _ := database.GetTrackingArtists()
+	songs, _ := database.GetTrackingSongs()
+	artistAltMap, songAltMap, _ := database.GetAllAltTitlesMap()
+	todayMatches, _ := database.GetTodayMatchedHistory()
+
+	out := ListJSONOutput{
+		TodayMatches: todayMatches,
+		Artists:      []TargetWithAlts{},
+		Songs:        []TargetWithAlts{},
+	}
+
+	for _, a := range artists {
+		out.Artists = append(out.Artists, TargetWithAlts{
+			Title:     a.Title,
+			AltTitles: artistAltMap[a.Title],
+			StartFrom: a.StartFrom.Format("2006-01-02"),
+		})
+	}
+
+	for _, s := range songs {
+		out.Songs = append(out.Songs, TargetWithAlts{
+			Title:     s.Title,
+			AltTitles: songAltMap[s.Title],
+			StartFrom: s.StartFrom.Format("2006-01-02"),
+		})
+	}
+
+	b, _ := json.MarshalIndent(out, "", "  ")
+	fmt.Println(string(b))
+}
+
+func formatAliases(aliases []string) string {
+	if len(aliases) == 0 {
+		return "(없음)"
+	}
+	return strings.Join(aliases, ", ")
+}
+
 func printUsage() {
 	fmt.Println(`사용법:
-  ./tracking-tj                         : TJ 신곡 수집 및 매칭 검사 실행
-  ./tracking-tj run                     : TJ 신곡 수집 및 매칭 검사 실행
-  ./tracking-tj add artist <가수명> [날짜] : 관심 아티스트 추가 (날짜 기본값: 오늘, 예: 2026-07-01)
-  ./tracking-tj add song <곡제목> [날짜]   : 관심 곡 추가 (날짜 기본값: 오늘, 예: 2026-07-01)
-  ./tracking-tj delete artist <가수명>   : 관심 아티스트 삭제
-  ./tracking-tj delete song <곡제목>     : 관심 곡 삭제
-  ./tracking-tj list                    : 추적 대상, 오늘 매칭 신곡 및 실행 이력 목록 조회`)
+  ./tracking-tj                                      : TJ 신곡 수집 및 매칭 검사 실행 (신규 매칭 시 TSV 출력)
+  ./tracking-tj search <검색어>                       : YouTube/나무위키에서 별칭/번역명 검색 (JSON 출력)
+  ./tracking-tj add song <곡제목> [별칭1 별칭2...]     : 관심 곡 및 별칭 추가
+  ./tracking-tj add song <곡제목> --alias="별칭1,별칭2": 관심 곡 및 별칭 일괄 추가
+  ./tracking-tj add song <곡제목> --auto-search      : 곡 추가 및 YouTube/나무위키 별칭 자동 수집 등록
+  ./tracking-tj add artist <가수명> [별칭1 별칭2...]   : 관심 아티스트 및 별칭 추가
+  ./tracking-tj delete song <곡제목>                  : 관심 곡 및 관련 별칭 일괄 삭제
+  ./tracking-tj delete artist <가수명>                : 관심 아티스트 및 관련 별칭 일괄 삭제
+  ./tracking-tj list [--json]                        : 추적 목록 및 실행 이력 조회 (텍스트 또는 JSON)`)
 }

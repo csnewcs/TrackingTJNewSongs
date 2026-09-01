@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -131,6 +132,7 @@ func (d *DB) AddTrackingArtist(title string, startFrom time.Time) error {
 }
 
 func (d *DB) DeleteTrackingArtist(title string) (int64, error) {
+	_ = d.DeleteAltTitles("artist", title)
 	res, err := d.db.Exec("DELETE FROM tracking_artists WHERE title = $1", title)
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete from tracking_artists: %w", err)
@@ -147,11 +149,64 @@ func (d *DB) AddTrackingSong(title string, startFrom time.Time) error {
 }
 
 func (d *DB) DeleteTrackingSong(title string) (int64, error) {
+	_ = d.DeleteAltTitles("song", title)
 	res, err := d.db.Exec("DELETE FROM tracking_songs WHERE title = $1", title)
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete from tracking_songs: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+func (d *DB) AddAltTitles(targetType, targetTitle string, altTitles []string, source string) error {
+	for _, alt := range altTitles {
+		alt = strings.TrimSpace(alt)
+		if alt == "" || strings.EqualFold(alt, targetTitle) {
+			continue
+		}
+		_, err := d.db.Exec(
+			"INSERT INTO alt_titles (target_type, target_title, alt_title, source) VALUES ($1, $2, $3, $4) ON CONFLICT (target_type, target_title, alt_title) DO NOTHING",
+			targetType, targetTitle, alt, source,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert alt_title: %w", err)
+		}
+	}
+	return nil
+}
+
+func (d *DB) GetAltTitlesMap(targetType string) (map[string][]string, error) {
+	rows, err := d.db.Query("SELECT target_title, alt_title FROM alt_titles WHERE target_type = $1", targetType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query alt_titles: %w", err)
+	}
+	defer rows.Close()
+
+	m := make(map[string][]string)
+	for rows.Next() {
+		var targetTitle, altTitle string
+		if err := rows.Scan(&targetTitle, &altTitle); err != nil {
+			return nil, err
+		}
+		m[targetTitle] = append(m[targetTitle], altTitle)
+	}
+	return m, nil
+}
+
+func (d *DB) GetAllAltTitlesMap() (map[string][]string, map[string][]string, error) {
+	artistsMap, err := d.GetAltTitlesMap("artist")
+	if err != nil {
+		return nil, nil, err
+	}
+	songsMap, err := d.GetAltTitlesMap("song")
+	if err != nil {
+		return nil, nil, err
+	}
+	return artistsMap, songsMap, nil
+}
+
+func (d *DB) DeleteAltTitles(targetType, targetTitle string) error {
+	_, err := d.db.Exec("DELETE FROM alt_titles WHERE target_type = $1 AND target_title = $2", targetType, targetTitle)
+	return err
 }
 
 func (d *DB) RecordLastUpdated(date time.Time, matched int) error {

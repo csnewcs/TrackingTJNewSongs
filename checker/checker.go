@@ -2,6 +2,7 @@ package checker
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -38,11 +39,40 @@ func NewChecker(dictEntries []db.KoreanDictEntry) *Checker {
 	}
 }
 
+var tokenDelimRegex = regexp.MustCompile(`[\(\)\[\]\{\}\,\/\&\+\-\|\;\:\~]|\b(?:feat|featuring|with|prod|by|vs|of)\b\.?`)
+
+func extractTokens(text string) []string {
+	parts := tokenDelimRegex.Split(text, -1)
+	var tokens []string
+	seen := make(map[string]bool)
+
+	for _, part := range parts {
+		trimmed := strings.ToLower(strings.TrimSpace(part))
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			tokens = append(tokens, trimmed)
+		}
+		// Also split by whitespace
+		words := strings.Fields(trimmed)
+		if len(words) > 1 {
+			for _, w := range words {
+				if len(w) > 0 && !seen[w] {
+					seen[w] = true
+					tokens = append(tokens, w)
+				}
+			}
+		}
+	}
+	return tokens
+}
+
 func (c *Checker) CheckMatches(
 	newSongs []tjapi.TJSongItem,
 	artists []db.TrackingItem,
 	songs []db.TrackingItem,
 	alreadyMatchedProMap map[int]bool,
+	artistAltMap map[string][]string,
+	songAltMap map[string][]string,
 ) []MatchResult {
 	var results []MatchResult
 
@@ -57,20 +87,37 @@ func (c *Checker) CheckMatches(
 		matchedArtist := false
 		matchedSongTitle := false
 
-		// 1. Artist matching
+		// 1. Artist matching (원제 및 별칭 검사)
 		for _, artist := range artists {
-			if c.isMatch(item.IndexSong, artist.Title) {
+			if c.isMatch(item.IndexSong, artist.Title, true) {
 				matchedArtist = true
 				matchedReasons = append(matchedReasons, fmt.Sprintf("가수 매칭: '%s'", artist.Title))
+			} else if artistAltMap != nil {
+				for _, alt := range artistAltMap[artist.Title] {
+					if c.isMatch(item.IndexSong, alt, true) {
+						matchedArtist = true
+						matchedReasons = append(matchedReasons, fmt.Sprintf("가수 매칭 (별칭 '%s'): '%s'", alt, artist.Title))
+						break
+					}
+				}
 			}
 		}
 
-		// 2. Song title matching
+		// 2. Song title matching (원제 및 별칭 검사)
 		for _, songTrack := range songs {
-			if c.isMatch(item.IndexTitle, songTrack.Title) {
+			if c.isMatch(item.IndexTitle, songTrack.Title, false) {
 				matchedSongTitle = true
 				matchedSongTitles = append(matchedSongTitles, songTrack.Title)
 				matchedReasons = append(matchedReasons, fmt.Sprintf("곡 제목 매칭: '%s'", songTrack.Title))
+			} else if songAltMap != nil {
+				for _, alt := range songAltMap[songTrack.Title] {
+					if c.isMatch(item.IndexTitle, alt, false) {
+						matchedSongTitle = true
+						matchedSongTitles = append(matchedSongTitles, songTrack.Title)
+						matchedReasons = append(matchedReasons, fmt.Sprintf("곡 제목 매칭 (별칭 '%s'): '%s'", alt, songTrack.Title))
+						break
+					}
+				}
 			}
 		}
 
@@ -94,7 +141,7 @@ func (c *Checker) CheckMatches(
 	return results
 }
 
-func (c *Checker) isMatch(target string, query string) bool {
+func (c *Checker) isMatch(target string, query string, isArtist bool) bool {
 	targetLower := strings.ToLower(strings.TrimSpace(target))
 	queryLower := strings.ToLower(strings.TrimSpace(query))
 
@@ -102,23 +149,38 @@ func (c *Checker) isMatch(target string, query string) bool {
 		return false
 	}
 
-	// Direct substring match
-	if strings.Contains(targetLower, queryLower) || strings.Contains(queryLower, targetLower) {
+	// 1. Direct exact match
+	if targetLower == queryLower {
 		return true
 	}
 
-	// Dictionary translation lookup match
+	// 2. Token boundary match (delimiters like (), [], Feat., commas, etc.)
+	tokens := extractTokens(targetLower)
+	for _, tok := range tokens {
+		if tok == queryLower {
+			return true
+		}
+	}
+
+	// 3. Dictionary translation lookup match
 	if translations, ok := c.dictMap[queryLower]; ok {
 		for _, trans := range translations {
-			if strings.Contains(targetLower, trans) || strings.Contains(trans, targetLower) {
+			if targetLower == trans {
 				return true
+			}
+			for _, tok := range tokens {
+				if tok == trans {
+					return true
+				}
 			}
 		}
 	}
 
-	if translations, ok := c.dictMap[targetLower]; ok {
-		for _, trans := range translations {
-			if strings.Contains(queryLower, trans) || strings.Contains(trans, queryLower) {
+	// 4. For Song Titles: check prefix/suffix match with boundary (e.g. "Flower (Acoustic Ver.)" matching "Flower")
+	if !isArtist {
+		if strings.HasPrefix(targetLower, queryLower) {
+			rem := strings.TrimPrefix(targetLower, queryLower)
+			if rem == "" || strings.HasPrefix(rem, " ") || strings.HasPrefix(rem, "(") || strings.HasPrefix(rem, "[") || strings.HasPrefix(rem, "-") {
 				return true
 			}
 		}
