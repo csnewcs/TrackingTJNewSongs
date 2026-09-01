@@ -112,13 +112,29 @@ func main() {
 
 func runTracker(database *db.DB) {
 	now := time.Now()
-	searchYm := now.Format("200601")
+	currentYm := now.Format("200601")
+	prevYm := now.AddDate(0, -1, 0).Format("200601")
 
-	// 1. API 신곡 조회
+	// 1. API 신곡 조회 (월 전환기 누락 방지를 위해 당월 및 전월 신곡 수집)
 	apiClient := tjapi.NewClient()
-	songs, err := apiClient.FetchNewSongs(searchYm)
+	songsCurrent, err := apiClient.FetchNewSongs(currentYm)
 	if err != nil {
-		log.Fatalf("❌ TJ API 수집 실패: %v", err)
+		log.Fatalf("❌ TJ API 당월 수집 실패: %v", err)
+	}
+
+	songsPrev, err := apiClient.FetchNewSongs(prevYm)
+	if err != nil {
+		// 전월 조회 실패 시 당월만 진행
+		songsPrev = nil
+	}
+
+	seen := make(map[int]bool)
+	var songs []tjapi.TJSongItem
+	for _, item := range append(songsCurrent, songsPrev...) {
+		if !seen[item.Pro] {
+			seen[item.Pro] = true
+			songs = append(songs, item)
+		}
 	}
 
 	// 2. DB 추적 정보 읽기
